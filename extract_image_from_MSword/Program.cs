@@ -2,7 +2,8 @@
 using System.Configuration;
 using System.Diagnostics;
 using System.IO;
-using Newtonsoft.Json;
+using System.IO.Compression;
+using System.Linq;
 
 namespace extract_image_from_MSword
 {
@@ -19,22 +20,43 @@ namespace extract_image_from_MSword
             var sw = new Stopwatch();
             sw.Start();
 
+            // 設定読み込み
             var targetDir = ConfigurationManager.AppSettings["target_dir"];
             var imageDir = ConfigurationManager.AppSettings["image_dir"];
 
+            // メイン処理
+            DeleteFiles(imageDir);
             var docxFiles = GetWordFiles(targetDir);
             var copyFiles = CopyWordFiles(imageDir, docxFiles);
-            var zipFiles = ChangeZip(copyFiles);
-
-            Debug.WriteLine(WriteList(zipFiles));
+            var extractDirs = Extract(copyFiles);
+            SplitDirectory(extractDirs);
+            RenameFileName(imageDir);
 
             sw.Stop();
             Debug.WriteLine(sw.Elapsed);
         }
 
         /// <summary>
-        /// 対象のディレクトリからWordファイルのリスト取得します。
+        /// 対象ディレクトリ配下のディレクトリ・ファイルを削除します。
         /// </summary>
+        private static void DeleteFiles(string targetDir)
+        {
+            var target = new DirectoryInfo(targetDir);
+            foreach (var file in target.GetFiles())
+            {
+                file.Delete();
+            }
+            foreach (var dir in target.GetDirectories())
+            {
+                dir.Delete(true);
+            }
+        }
+
+        /// <summary>
+        /// 対象のディレクトリからWordファイルのリストを取得します。
+        /// </summary>
+        /// <param name="targetDir"></param>
+        /// <returns></returns>
         private static IEnumerable<string> GetWordFiles(string targetDir)
         {
             return Directory.GetFiles(targetDir, "*.docx", SearchOption.AllDirectories);
@@ -43,6 +65,8 @@ namespace extract_image_from_MSword
         /// <summary>
         /// docxFilesのファイルをimageDirにコピーします。
         /// </summary>
+        /// <param name="imageDir"></param>
+        /// <param name="docxFiles"></param>
         /// <returns>コピー先のパス</returns>
         private static IEnumerable<string> CopyWordFiles(string imageDir, IEnumerable<string> docxFiles)
         {
@@ -55,34 +79,148 @@ namespace extract_image_from_MSword
                 var destFileName = Path.Combine(imageDir, fileName);
                 rtnList.Add(destFileName);
 
-                // string sourceFileName, string destFileName)
                 File.Copy(docxFile, destFileName, true);
             }
             return rtnList;
         }
 
         /// <summary>
-        /// 対象のファイルをzipに変換します。
-        /// 拡張子を変更するだけです。
+        /// 対象のzipファイルから画像ファイルを抜き出します。
         /// </summary>
-        private static IEnumerable<string> ChangeZip(IEnumerable<string> targetFiles)
+        /// <param name="zipFiles">zipファイルリスト</param>
+        /// <returns>画像を格納しているパスのリスト</returns>
+        private static IEnumerable<string> Extract(IEnumerable<string> zipFiles)
         {
             var rtnList = new List<string>();
-            foreach (var targetFile in targetFiles)
+            foreach (var file in zipFiles)
             {
-                var destFileName = targetFile.Replace(".docx", ".zip");
-                rtnList.Add(destFileName);
-                File.Move(targetFile, destFileName);
+                // docxをzipに変換
+                var zipFileName = file.Replace(".docx", ".zip");
+                File.Move(file, zipFileName);
+
+                // 画像のコピー先
+                var imageFilePath = file.Replace(".docx", "");
+                if (!Directory.Exists(imageFilePath))
+                {
+                    Directory.CreateDirectory(imageFilePath);
+                }
+                rtnList.Add(imageFilePath);
+
+                // 画像ファイルだけ取り出す
+                using (var archive = ZipFile.OpenRead(zipFileName))
+                {
+                    var imageArchiveEntries = archive.Entries
+                        .Where(x => x.FullName.Contains(@"word/media/image"));
+
+                    foreach (var entry in imageArchiveEntries)
+                    {
+                        entry.ExtractToFile(Path.Combine(imageFilePath, entry.Name.Replace("image", "")));
+                    }
+                }
+
+                // zipファイルを削除
+                File.Delete(zipFileName);
             }
             return rtnList;
         }
 
         /// <summary>
-        /// Listを整形した文字列に変換して返します。
+        /// 画像ファイルを50個単位でサブディレクトリに分割します。
+        /// 50個以下の場合は、サブディレクトリを作成しません。
         /// </summary>
-        private static string WriteList(object list)
+        /// <param name="extractDirs"></param>
+        private static void SplitDirectory(IEnumerable<string> extractDirs)
         {
-            return JsonConvert.SerializeObject(list, Formatting.Indented);
+            foreach (var dir in extractDirs)
+            {
+                var fileList = GetFileList(dir).ToList();
+                var maxLength = fileList.Max(x => x.Length);
+
+                // ファイルの桁数をあわせる（ファイルをソートするため）
+                foreach (var file in fileList)
+                {
+                    if (file.Length == maxLength)
+                    {
+                        continue;
+                    }
+
+                    // 追加する0の数
+                    var zero = string.Empty;
+                    for (var i = 0; i < maxLength - file.Length; i++)
+                    {
+                        zero += "0";
+                    }
+
+                    var sourceFileName = Path.Combine(dir, file);
+                    var destFileName = Path.Combine(dir, zero + file);
+                    File.Move(sourceFileName, destFileName);
+                }
+
+                // ファイル名を変更したので、一覧を取得し直す
+                fileList = GetFileList(dir).ToList();
+
+                // 50ファイルずつ分割
+                if (fileList.Count <= 50)
+                {
+                    continue;
+                }
+
+                foreach (var file in fileList)
+                {
+                    // ファイル番号
+                    var num = int.Parse(Path.GetFileNameWithoutExtension(file));
+
+                    // 格納先ディレクトリ
+                    var location = Path.Combine(dir, $"{num / 50 + 1:000}");
+                    if (!Directory.Exists(location))
+                    {
+                        Directory.CreateDirectory(location);
+                    }
+
+                    var sourceFileName = Path.Combine(dir, file);
+                    var destFileName = Path.Combine(dir, location, file);
+                    File.Move(sourceFileName, destFileName);
+                }
+            }
+        }
+
+        /// <summary>
+        /// ファイル名を変更します。
+        /// ・ディレクトリ単位で01から連番（51→1）
+        /// ・3桁のファイル名を2桁に変更
+        /// </summary>
+        /// <param name="imageDir"></param>
+        private static void RenameFileName(string imageDir)
+        {
+            var files = Directory.GetFiles(imageDir, "*", SearchOption.AllDirectories);
+
+            foreach (var file in files)
+            {
+                // ファイル番号
+                var num = int.Parse(Path.GetFileNameWithoutExtension(file));
+                if (num >= 50)
+                {
+                    num++;
+                }
+
+                var dir = Path.GetDirectoryName(file);
+                var fileName = $"{num % 50:00}" + Path.GetExtension(file);
+                var destFileName = Path.Combine(dir, fileName);
+                File.Move(file, destFileName);
+            }
+        }
+
+        /// <summary>
+        /// 対象のディレクトリ配下のファイル一覧を返します。
+        /// ファイル名のみの一覧を返します。
+        /// </summary>
+        /// <param name="dir"></param>
+        /// <returns></returns>
+        private static IEnumerable<string> GetFileList(string dir)
+        {
+            return Directory.GetFiles(dir)
+                .Select(Path.GetFileName)
+                .OrderBy(x => x);
         }
     }
 }
