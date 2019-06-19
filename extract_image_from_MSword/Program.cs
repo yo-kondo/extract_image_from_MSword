@@ -1,9 +1,10 @@
-﻿using System.Collections.Generic;
-using System.Configuration;
+﻿using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using Microsoft.Extensions.Configuration;
 
 namespace extract_image_from_MSword
 {
@@ -21,19 +22,36 @@ namespace extract_image_from_MSword
             sw.Start();
 
             // 設定読み込み
-            var targetDir = ConfigurationManager.AppSettings["target_dir"];
-            var imageDir = ConfigurationManager.AppSettings["image_dir"];
+            var settings = GetSettings();
 
             // メイン処理
-            DeleteFiles(imageDir);
-            var docxFiles = GetWordFiles(targetDir);
-            var copyFiles = CopyWordFiles(imageDir, docxFiles);
+            DeleteFiles(settings.ImageDir);
+            var docxFiles = GetWordFiles(settings.TargetDir);
+            var copyFiles = CopyWordFiles(settings.ImageDir, docxFiles);
             var extractDirs = Extract(copyFiles);
             SplitDirectory(extractDirs);
-            RenameFileName(imageDir);
+            RenameFileName(settings.ImageDir);
 
             sw.Stop();
-            Debug.WriteLine(sw.Elapsed);
+            Console.WriteLine(sw.Elapsed);
+        }
+
+        /// <summary>
+        /// AppSettings.jsonから値を取得します。
+        /// </summary>
+        /// <returns>設定情報</returns>
+        private static Setting GetSettings()
+        {
+            var builder = new ConfigurationBuilder();
+            builder.SetBasePath(Directory.GetCurrentDirectory());
+            builder.AddJsonFile("AppSettings.json");
+            var config = builder.Build();
+
+            return new Setting
+            {
+                TargetDir = config.GetSection("AppSettings")["TargetDir"],
+                ImageDir = config.GetSection("AppSettings")["ImageDir"]
+            };
         }
 
         /// <summary>
@@ -41,11 +59,18 @@ namespace extract_image_from_MSword
         /// </summary>
         private static void DeleteFiles(string targetDir)
         {
+            if (!Directory.Exists(targetDir))
+            {
+                Directory.CreateDirectory(targetDir);
+                return;
+            }
+
             var target = new DirectoryInfo(targetDir);
             foreach (var file in target.GetFiles())
             {
                 file.Delete();
             }
+
             foreach (var dir in target.GetDirectories())
             {
                 dir.Delete(true);
@@ -81,6 +106,7 @@ namespace extract_image_from_MSword
 
                 File.Copy(docxFile, destFileName, true);
             }
+
             return rtnList;
         }
 
@@ -104,6 +130,7 @@ namespace extract_image_from_MSword
                 {
                     Directory.CreateDirectory(imageFilePath);
                 }
+
                 rtnList.Add(imageFilePath);
 
                 // 画像ファイルだけ取り出す
@@ -121,6 +148,7 @@ namespace extract_image_from_MSword
                 // zipファイルを削除
                 File.Delete(zipFileName);
             }
+
             return rtnList;
         }
 
@@ -222,5 +250,21 @@ namespace extract_image_from_MSword
                 .Select(Path.GetFileName)
                 .OrderBy(x => x);
         }
+    }
+
+    /// <summary>
+    /// 設定を保持するクラス
+    /// </summary>
+    internal class Setting
+    {
+        /// <summary>
+        /// 抽出対象のwordファイルを格納しているディレクトリ
+        /// </summary>
+        public string TargetDir { get; set; }
+
+        /// <summary>
+        /// wordから抽出した画像ファイルを格納するディレクトリ
+        /// </summary>
+        public string ImageDir { get; set; }
     }
 }
