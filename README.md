@@ -18,17 +18,18 @@ MS Wordファイルから画像を抽出します。
 
 ## 設定ファイル
 
-`appsettings.json`
+JSONファイルで行う。  
+プロジェクトルートに`appsettings.json`を作成する。  
+ファイルは出力ディレクトリにコピーする設定にする。
 
 ```json
 {
   "AppSettings": {
-    // 抽出対象のwordファイルを格納しているディレクトリ
     "TargetDir": "D:\\work\\wordImage_word",
-    // wordから抽出した画像ファイルを格納するディレクトリ
     "ImageDir": "D:\\work\\wordImage_image"
   }
 }
 ```
 
-実際の設定ファイルには、コメント`//`を記載しないこと。
+* TargetDir: 抽出対象のwordファイルを格納しているディレクトリ
+* TargImageDiretDirs: wordから抽出した画像ファイルを格納するディレクトリ
