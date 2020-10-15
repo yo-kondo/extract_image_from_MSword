@@ -1,6 +1,6 @@
 # extract_image_from_MSword
 
-MS Wordファイルから画像を抽出します。
+MS Wordファイルから画像を抽出する。
 
 ## 処理概要
 
